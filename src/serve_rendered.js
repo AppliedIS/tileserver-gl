@@ -18,7 +18,6 @@ var Canvas = require('canvas'),
     mercator = new (require('@mapbox/sphericalmercator'))(),
     mbgl = require('@mapbox/mapbox-gl-native'),
     mbtiles = require('@mapbox/mbtiles'),
-    pngquant = require('node-pngquant-native'),
     proj4 = require('proj4'),
     request = require('request');
 
@@ -123,12 +122,18 @@ module.exports = function(options, repo, params, id, dataResolver) {
   var existingFonts = {};
   var fontListingPromise = new Promise(function(resolve, reject) {
     fs.readdir(options.paths.fonts, function(err, files) {
+      if (err) {
+        reject(err);
+        return;
+      }
       files.forEach(function(file) {
         fs.stat(path.join(options.paths.fonts, file), function(err, stats) {
-          if (!err) {
-            if (stats.isDirectory()) {
-              existingFonts[path.basename(file)] = true;
-            }
+          if (err) {
+            reject(err);
+            return;
+          }
+          if (stats.isDirectory()) {
+            existingFonts[path.basename(file)] = true;
           }
         });
       });
@@ -165,6 +170,7 @@ module.exports = function(options, repo, params, id, dataResolver) {
             var parts = req.url.split('/');
             var sourceId = parts[2];
             var source = map.sources[sourceId];
+            var sourceInfo = styleJSON.sources[sourceId];
             var z = parts[3] | 0,
                 x = parts[4] | 0,
                 y = parts[5].split('.')[0] | 0,
@@ -172,7 +178,7 @@ module.exports = function(options, repo, params, id, dataResolver) {
             source.getTile(z, x, y, function(err, data, headers) {
               if (err) {
                 //console.log('MBTiles error, serving empty', err);
-                createEmptyResponse(source.format, source.color, callback);
+                createEmptyResponse(sourceInfo.format, sourceInfo.color, callback);
                 return;
               }
 
@@ -182,7 +188,12 @@ module.exports = function(options, repo, params, id, dataResolver) {
               }
 
               if (format == 'pbf') {
-                response.data = zlib.unzipSync(data);
+                try {
+                  response.data = zlib.unzipSync(data);
+                }
+                catch (err) {
+                  console.log("Skipping incorrect header for tile mbtiles://%s/%s/%s/%s.pbf", id, z, x, y);
+                }
                 if (options.dataDecoratorFunc) {
                   response.data = options.dataDecoratorFunc(
                     sourceId, 'data', response.data, z, x, y);
@@ -345,18 +356,15 @@ module.exports = function(options, repo, params, id, dataResolver) {
   });
 
   var renderersReadyPromise = Promise.all(queue).then(function() {
-    // TODO: make pool sizes configurable
+    // standard and @2x tiles are much more usual -> default to larger pools
+    var minPoolSizes = options.minRendererPoolSizes || [8, 4, 2];
+    var maxPoolSizes = options.maxRendererPoolSizes || [16, 8, 4];
     for (var s = 1; s <= maxScaleFactor; s++) {
-      var minPoolSize = 2;
-
-      // standard and @2x tiles are much more usual -> create larger pools
-      if (s <= 2) {
-        minPoolSize *= 2;
-        if (s <= 1) {
-          minPoolSize *= 2;
-        }
-      }
-      map.renderers[s] = createPool(s, minPoolSize, 2 * minPoolSize);
+      var i = Math.min(minPoolSizes.length - 1, s - 1);
+      var j = Math.min(maxPoolSizes.length - 1, s - 1);
+      var minPoolSize = minPoolSizes[i];
+      var maxPoolSize = Math.max(minPoolSize, maxPoolSizes[j]);
+      map.renderers[s] = createPool(s, minPoolSize, maxPoolSize);
     }
   });
 
@@ -449,16 +457,6 @@ module.exports = function(options, repo, params, id, dataResolver) {
         image.toBuffer(function(err, buffer, info) {
           if (!buffer) {
             return res.status(404).send('Not found');
-          }
-
-          if (format == 'png') {
-            var usePngQuant =
-                (options.formatQuality || {}).pngQuantization === true;
-            if (usePngQuant) {
-              buffer = pngquant.compress(buffer, {
-                quality: [0, formatQuality || 90]
-              });
-            }
           }
 
           res.set({
@@ -753,9 +751,8 @@ module.exports = function(options, repo, params, id, dataResolver) {
     return res.send(info);
   });
 
-  return new Promise(function(resolve, reject) {
-    Promise.all([fontListingPromise, renderersReadyPromise]).then(function() {
-      resolve(app);
-    });
+  return Promise.all([fontListingPromise, renderersReadyPromise]).then(function() {
+    return app;
   });
+
 };

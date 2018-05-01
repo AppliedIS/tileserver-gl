@@ -9,6 +9,8 @@ Vector and raster maps with GL styles. Server side rendering by Mapbox GL Native
 
 ## Get Started
 
+Make sure you have Node.js version **6** installed (running `node -v` it should output something like `v6.11.3`).
+
 Install `tileserver-gl` with server-side raster rendering of vector tiles with npm
 
 ```bash
@@ -18,7 +20,7 @@ npm install -g tileserver-gl
 Now download vector tiles from [OpenMapTiles](https://openmaptiles.org/downloads/).
 
 ```bash
-curl -o zurich_switzerland.mbtiles https://openmaptiles.os.zhdk.cloud.switch.ch/v3.3/extracts/zurich_switzerland.mbtiles
+curl -o zurich_switzerland.mbtiles https://[GET-YOUR-LINK]/extracts/zurich_switzerland.mbtiles
 ```
 
 Start `tileserver-gl` with the downloaded vector tiles.
